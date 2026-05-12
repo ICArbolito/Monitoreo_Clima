@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Baalam | MONITOREO DE CLIMA</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root { --baalam-green: #29903B; --baalam-red: #ef4444; --baalam-blue: #0669FE; }
+        body { background-color: #0f172a; font-family: 'Inter', sans-serif; overflow: hidden; height: 100vh; padding: 0.5rem; display: flex; flex-direction: column; }
+        .sidebar { background: #111827; border-right: 1px solid #1f2937; width: 14%; }
+        .content-panel { background: #ffffff; border-radius: 1rem; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .cedis-card { background: #ffffff; border: 1px solid #f1f5f9; border-radius: 1.5rem; height: 100%; display: flex; flex-direction: column; padding: 1.25rem; position: relative; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05); }
+        .sparkline-container { position: absolute; inset: 0; top: 30%; bottom: 35%; z-index: 1; pointer-events: none; padding: 0 1rem; }
+        .timeline-labels { position: absolute; bottom: 30%; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 1.5rem; z-index: 2; }
+        .card-header, .card-footer { position: relative; z-index: 10; background: white; }
+        .chart-panel { background: #ffffff; border-radius: 1rem; width: 28%; display: flex; flex-direction: column; gap: 0.5rem; }
+        #auto-summary { border-top: 1px solid #1e293b; padding-top: 1.5rem; color: #94a3b8; }
+        .summary-text { font-size: 0.85rem; line-height: 1.5; font-weight: 500; }
+        .footer-seal { font-size: 9px; color: #475569; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+
+    <div class="flex flex-1 gap-2 overflow-hidden">
+        <aside class="sidebar flex flex-col justify-between p-4 rounded-xl">
+            <div class="space-y-6 text-white text-center">
+                <div class="py-2 border-b border-slate-800">
+                    <div class="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">PROMEDIO ACTUAL REGIONAL</div>
+                    <div class="text-5xl font-black text-green-500" id="kpiCurrent">--°</div>
+                </div>
+                <div>
+                    <div class="text-[9px] font-black uppercase tracking-widest mb-1 font-bold" style="color: var(--baalam-red)">MÁXIMA PROM. REGIONAL</div>
+                    <div class="text-6xl font-black" id="kpiMax">--°</div>
+                </div>
+                <div>
+                    <div class="text-[9px] font-black uppercase tracking-widest mb-1 font-bold" style="color: var(--baalam-blue)">MÍNIMA PROM. REGIONAL</div>
+                    <div class="text-6xl font-black" id="kpiMin">--°</div>
+                </div>
+
+                <div id="auto-summary" class="text-left italic">
+                    <p class="font-black text-slate-500 mb-3 uppercase tracking-tighter text-[10px]">Perspectiva Operativa</p>
+                    <div id="summary-text" class="summary-text space-y-2 text-slate-400">Analizando promedios regionales...</div>
+                </div>
+            </div>
+            <button onclick="cargarClima()" class="w-full py-4 bg-green-600 text-white rounded-xl font-black text-xs hover:bg-green-500 transition-all">
+                <i class="fas fa-sync-alt" id="refreshIcon"></i>
+            </button>
+        </aside>
+
+        <section class="content-panel p-4">
+            <div class="flex flex-col items-center mb-6 px-2 relative border-b border-slate-100 pb-4">
+    <div class="flex items-center gap-3">
+        <span class="w-2 h-2 rounded-full bg-[#29903B] animate-pulse"></span>
+        <h2 class="text-2xl font-black text-slate-800 uppercase tracking-[0.15em]">
+            IC <span class="text-slate-300 mx-2">|</span> MONITOREO DE CLIMA
+        </h2>
+        <span class="w-2 h-2 rounded-full bg-[#29903B] animate-pulse"></span>
+    </div>
+    <div class="absolute right-4 top-2">
+        <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full border border-slate-100" id="lastUpdate">
+            SYNC: --:--
+        </span>
+    </div>
+</div>
+            <div id="dashboard" class="grid grid-cols-3 gap-4 flex-1 overflow-y-auto pr-2"></div>
+        </section>
+
+        <aside class="chart-panel">
+            <div class="flex-1 p-6 flex flex-col">
+                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 text-center">Tendencia Promedio de Máximas (REGIONAL)</p>
+                <div class="flex-1 min-h-0"><canvas id="trendChart"></canvas></div>
+            </div>
+            <div class="flex-1 p-6 border-t flex flex-col">
+                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 text-center">Balance Regional</p>
+                <div class="flex-1 min-h-0"><canvas id="regionalChart"></canvas></div>
+            </div>
+        </aside>
+    </div>
+
+    <footer class="flex justify-center py-2">
+        <div class="footer-seal">Source: Open-Meteo Weather API | Powered by Baalam</div>
+    </footer>
+
+    <script>
+        const config = {
+            regiones: {
+                'Bajío': [{ ciudad: "León", lat: 21.12, lon: -101.68 }, { ciudad: "Irapuato", lat: 20.67, lon: -101.35 }, { ciudad: "Querétaro", lat: 20.58, lon: -100.38 }],
+                'Altos Jalisco': [{ ciudad: "Arandas", lat: 20.70, lon: -102.76 }, { ciudad: "Lagos de Moreno", lat: 21.35, lon: -101.92 }, { ciudad: "Zapotlanejo", lat: 20.62, lon: -103.17 }],
+                'Michoacán': [{ ciudad: "Zamora", lat: 19.98, lon: -102.28 }, { ciudad: "La Piedad", lat: 20.33, lon: -102.02 }],
+                'Aguascalientes': [{ ciudad: "Aguascalientes", lat: 21.88, lon: -102.29 }]
+            }
+        };
+
+        const cds = Object.entries(config.regiones).flatMap(([region, cities]) => cities.map(c => ({...c, region})));
+        let charts = {};
+
+        async function cargarClima() {
+            const btn = document.getElementById('refreshIcon');
+            btn.classList.add('fa-spin');
+            try {
+                const results = await Promise.all(cds.map(async (cd) => {
+                    const resp = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${cd.lat}&longitude=${cd.lon}&current_weather=true&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto`);
+                    return { ...cd, data: await resp.json() };
+                }));
+                updateUI(results);
+                generarResumen(results);
+            } catch (e) { console.error(e); } finally { 
+                btn.classList.remove('fa-spin'); 
+                document.getElementById('lastUpdate').textContent = `SYNC: ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`; 
+            }
+        }
+
+        function generarResumen(results) {
+            const sumBox = document.getElementById('summary-text');
+            const avgHoy = results.reduce((acc, r) => acc + r.data.daily.temperature_2m_max[0], 0) / results.length;
+            const avgProx = results.reduce((acc, r) => acc + r.data.daily.temperature_2m_max[1], 0) / results.length;
+            const dif = avgProx - avgHoy;
+            const lluviaZonas = results.filter(r => r.data.daily.precipitation_probability_max[0] > 40);
+
+            let html = `<p>El promedio regional proyecta un ${dif >= 0 ? 'alza' : 'baja'} de ${Math.abs(dif).toFixed(1)}°C para mañana.</p>`;
+            html += `<p class="mt-2 text-white">Máxima promedio colectiva estimada: ${Math.round(avgHoy)}°C.</p>`;
+            if (lluviaZonas.length > 0) html += `<p class="mt-2 text-red-400 font-bold">Inestabilidad detectada en ${lluviaZonas.length} zonas operativas.</p>`;
+            else html += `<p class="mt-2 text-green-500">Operación sin riesgos de precipitación regional.</p>`;
+            sumBox.innerHTML = html;
+        }
+
+        function createThermalGradient(ctx, chartArea) {
+            const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+            gradient.addColorStop(0, '#0669FE'); gradient.addColorStop(1, '#ef4444');
+            return gradient;
+        }
+
+        function createThermalFade(ctx, chartArea) {
+            const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+            gradient.addColorStop(0, 'rgba(6, 105, 254, 0)'); gradient.addColorStop(1, 'rgba(239, 68, 68, 0.3)');
+            return gradient;
+        }
+
+        function updateUI(results) {
+            const avgCurrent = results.reduce((acc, r) => acc + r.data.current_weather.temperature, 0) / results.length;
+            const avgMaxToday = results.reduce((acc, r) => acc + r.data.daily.temperature_2m_max[0], 0) / results.length;
+            const avgMinToday = results.reduce((acc, r) => acc + r.data.daily.temperature_2m_min[0], 0) / results.length;
+
+            document.getElementById('kpiCurrent').textContent = Math.round(avgCurrent) + '°';
+            document.getElementById('kpiMax').textContent = Math.round(avgMaxToday) + '°';
+            document.getElementById('kpiMin').textContent = Math.round(avgMinToday) + '°';
+            
+            document.getElementById('dashboard').innerHTML = results.map((item, i) => `
+                <div class="cedis-card shadow-sm">
+                    <div class="card-header flex justify-between items-start pb-2">
+                        <h4 class="font-black text-slate-800 text-lg uppercase leading-none">${item.ciudad}</h4>
+                        <div class="text-3xl font-black text-slate-900">${Math.round(item.data.current_weather.temperature)}°</div>
+                    </div>
+                    <div class="sparkline-container"><canvas id="spark-${i}"></canvas></div>
+                    <div class="timeline-labels text-[7px] font-black text-slate-300 uppercase tracking-widest">
+                        <span>AHORA</span><span>12:00</span><span>18:00</span><span>00:00</span><span>06:00</span>
+                    </div>
+                    <div class="card-footer flex items-end justify-between mt-auto pt-4 border-t border-slate-50">
+                        <div class="flex gap-8">
+                            <div class="text-4xl font-black text-red-500">${Math.round(item.data.daily.temperature_2m_max[0])}°</div>
+                            <div class="text-4xl font-black text-blue-500" style="color: var(--baalam-blue)">${Math.round(item.data.daily.temperature_2m_min[0])}°</div>
+                        </div>
+                        <span class="text-[10px] font-black px-3 py-1 rounded-full bg-[#29903B] text-white uppercase tracking-widest">
+                            <i class="fas fa-tint mr-1"></i>${item.data.daily.precipitation_probability_max[0]}%
+                        </span>
+                    </div>
+                </div>`).join('');
+
+            results.forEach((item, i) => {
+                const ctx = document.getElementById(`spark-${i}`).getContext('2d');
+                new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: Array(24).fill(''), datasets: [{ 
+                        data: item.data.hourly.temperature_2m.slice(0, 24), 
+                        fill: true,
+                        borderColor: (c) => c.chart.chartArea ? createThermalGradient(c.chart.ctx, c.chart.chartArea) : '#ef4444',
+                        backgroundColor: (c) => c.chart.chartArea ? createThermalFade(c.chart.ctx, c.chart.chartArea) : 'transparent',
+                        borderWidth: 3, pointRadius: 0, tension: 0.4 
+                    }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false } } }
+                });
+            });
+            updateMainCharts(results);
+        }
+
+        function updateMainCharts(results) {
+            const ctxTrend = document.getElementById('trendChart').getContext('2d');
+            const avgMax7Days = results[0].data.daily.time.map((_, idx) => results.reduce((acc, r) => acc + r.data.daily.temperature_2m_max[idx], 0) / results.length);
+
+            if(charts.trend) charts.trend.destroy();
+            charts.trend = new Chart(ctxTrend, {
+                type: 'line',
+                data: { 
+                    labels: results[0].data.daily.time.map(t => new Date(t).toLocaleDateString('es-MX', {weekday: 'short'})), 
+                    datasets: [{ 
+                        data: avgMax7Days, 
+                        fill: true,
+                        borderColor: (c) => c.chart.chartArea ? createThermalGradient(c.chart.ctx, c.chart.chartArea) : '#0669FE',
+                        backgroundColor: (c) => c.chart.chartArea ? createThermalFade(c.chart.ctx, c.chart.chartArea) : 'transparent',
+                        borderWidth: 5, tension: 0.4 
+                    }] 
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+            });
+
+            const ctxReg = document.getElementById('regionalChart').getContext('2d');
+            const regLabels = Object.keys(config.regiones);
+            const regData = regLabels.map(reg => {
+                const group = results.filter(r => r.region === reg);
+                return group.reduce((acc, r) => acc + r.data.daily.temperature_2m_max[0], 0) / group.length;
+            });
+
+            if(charts.regional) charts.regional.destroy();
+            charts.regional = new Chart(ctxReg, {
+                type: 'bar',
+                data: { labels: regLabels, datasets: [{ data: regData, backgroundColor: '#0669FE', borderRadius: 15, hoverBackgroundColor: '#29903B' }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+            });
+        }
+        window.onload = cargarClima;
+    </script>
+</body>
+</html>
