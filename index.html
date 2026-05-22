@@ -68,22 +68,10 @@
             position: absolute; 
             inset: 0; 
             top: 28%; 
-            bottom: 32%; 
+            bottom: 30%; 
             z-index: 1; 
             pointer-events: none; 
             padding: 0 0.5rem; 
-        }
-        .timeline-labels { 
-            position: absolute; 
-            bottom: 28%; 
-            left: 0; 
-            right: 0; 
-            display: flex; 
-            justify-content: space-between; 
-            padding: 0 0.5rem; 
-            z-index: 2; 
-            font-size: 0.65rem;
-            pointer-events: none;
         }
         .card-header, .card-footer { 
             position: relative; 
@@ -337,6 +325,7 @@
             document.getElementById('kpiMax').textContent = Math.round(avgMaxToday) + '°';
             document.getElementById('kpiMin').textContent = Math.round(avgMinToday) + '°';
             
+            // Se eliminó el HTML estático de las etiquetas (timeline-labels) para evitar duplicados
             document.getElementById('dashboard').innerHTML = results.map((item, i) => {
                 const temp = item.data.current_weather?.temperature ?? 0;
                 const maxT = item.data.daily?.temperature_2m_max?.[0] ?? 0;
@@ -353,9 +342,7 @@
                         <div class="text-3xl font-black text-slate-800">${Math.round(temp)}°</div>
                     </div>
                     <div class="sparkline-container"><canvas id="spark-${i}"></canvas></div>
-                    <div class="timeline-labels text-[7px] font-bold text-slate-400 uppercase tracking-wide">
-                        <span>00H</span><span>06H</span><span>12H</span><span>18H</span><span>23H</span>
-                    </div>
+                    <!-- Las etiquetas ahora las dibuja Chart.js -->
                     <div class="card-footer flex items-end justify-between mt-auto pt-4 border-t border-slate-100">
                         <div class="flex gap-6">
                             <div class="text-center">
@@ -378,21 +365,14 @@
                 const ctx = document.getElementById(`spark-${i}`).getContext('2d');
                 const hourlyData = item.data.hourly || {};
                 
-                // CORRECCIÓN LÓGICA: Ciclo diario completo 00:00 - 23:00
+                // CORRECCIÓN: Ciclo diario completo con etiquetas únicas generadas por Chart.js
                 const temps = hourlyData.temperature_2m?.slice(0, 24) || [];
                 const currentHour = new Date().getHours();
                 
                 new Chart(ctx, {
                     type: 'line',
                     data: { 
-                        labels: Array(24).fill('').map((_, h) => {
-                            if (h === 0) return '00H';
-                            if (h === 6) return '06H';
-                            if (h === 12) return '12H';
-                            if (h === 18) return '18H';
-                            if (h === 23) return '23H';
-                            return '';
-                        }),
+                        labels: Array.from({length: 24}, (_, h) => h), // Indices 0-23
                         datasets: [
                             { 
                                 data: temps, 
@@ -441,8 +421,8 @@
                                 displayColors: false,
                                 callbacks: {
                                     title: (ctx) => {
-                                        const h = new Date().getHours();
-                                        return ctx[0].label || `${h}:00`;
+                                        const h = parseInt(ctx[0].label);
+                                        return `${h.toString().padStart(2, '0')}:00`;
                                     },
                                     label: (ctx) => ` ${ctx.parsed.y.toFixed(1)}°C`
                                 }
@@ -452,8 +432,22 @@
                             x: { 
                                 display: true,
                                 grid: { display: false },
-                                ticks: { color: '#94a3b8', font: { size: 8, weight: '600' }, maxRotation: 0, autoSkip: false },
-                                border: { display: false }
+                                border: { display: false },
+                                ticks: { 
+                                    color: '#1e293b', // Etiqueta oscura
+                                    font: { size: 10, weight: '800', family: 'Inter' }, // Nítida y gruesa
+                                    maxRotation: 0, 
+                                    autoSkip: false,
+                                    // Solo mostramos las horas clave para evitar duplicados
+                                    callback: function(value) {
+                                        if (value === 0) return '00H';
+                                        if (value === 6) return '06H';
+                                        if (value === 12) return '12H';
+                                        if (value === 18) return '18H';
+                                        if (value === 23) return '23H';
+                                        return ''; // Oculta el resto
+                                    }
+                                }
                             }, 
                             y: { display: false, min: 10, max: 40 } 
                         }
@@ -511,17 +505,20 @@
                             max: 40,
                             ticks: {
                                 callback: (v) => v + '°',
-                                color: '#64748b',
-                                font: { size: 10, weight: '600', family: 'Inter' },
+                                color: '#0f172a', // Oscuro para mejor visibilidad
+                                font: { size: 11, weight: '700', family: 'Inter' },
                                 stepSize: 5
                             },
-                            grid: { color: 'rgba(148, 163, 184, 0.12)', drawBorder: false },
+                            grid: { color: '#f1f5f9', drawBorder: false }, // Líneas sutiles
                             border: { display: false }
                         },
                         x: {
                             grid: { display: false },
                             border: { display: false },
-                            ticks: { color: '#64748b', font: { size: 9, weight: '500' } }
+                            ticks: { 
+                                color: '#0f172a', // Oscuro
+                                font: { size: 11, weight: '700', family: 'Inter' } // Más nítido
+                            }
                         }
                     }
                 }
