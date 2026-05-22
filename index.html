@@ -312,6 +312,12 @@
             sumBox.innerHTML = html;
         }
 
+        function getTempColor(temp) {
+            if (temp < 18) return '#3b82f6';
+            if (temp < 25) return '#f59e0b';
+            return '#ef4444';
+        }
+
         function updateUI(results) {
             const validCurrent = results.map(r => r.data.current_weather?.temperature).filter(v => v !== undefined && !isNaN(v));
             const validMax = results.map(r => r.data.daily?.temperature_2m_max?.[0]).filter(v => v !== undefined && !isNaN(v));
@@ -325,7 +331,6 @@
             document.getElementById('kpiMax').textContent = Math.round(avgMaxToday) + '°';
             document.getElementById('kpiMin').textContent = Math.round(avgMinToday) + '°';
             
-            // Se eliminó el HTML estático de las etiquetas (timeline-labels) para evitar duplicados
             document.getElementById('dashboard').innerHTML = results.map((item, i) => {
                 const temp = item.data.current_weather?.temperature ?? 0;
                 const maxT = item.data.daily?.temperature_2m_max?.[0] ?? 0;
@@ -342,7 +347,6 @@
                         <div class="text-3xl font-black text-slate-800">${Math.round(temp)}°</div>
                     </div>
                     <div class="sparkline-container"><canvas id="spark-${i}"></canvas></div>
-                    <!-- Las etiquetas ahora las dibuja Chart.js -->
                     <div class="card-footer flex items-end justify-between mt-auto pt-4 border-t border-slate-100">
                         <div class="flex gap-6">
                             <div class="text-center">
@@ -364,15 +368,13 @@
             results.forEach((item, i) => {
                 const ctx = document.getElementById(`spark-${i}`).getContext('2d');
                 const hourlyData = item.data.hourly || {};
-                
-                // CORRECCIÓN: Ciclo diario completo con etiquetas únicas generadas por Chart.js
                 const temps = hourlyData.temperature_2m?.slice(0, 24) || [];
                 const currentHour = new Date().getHours();
                 
                 new Chart(ctx, {
                     type: 'line',
                     data: { 
-                        labels: Array.from({length: 24}, (_, h) => h), // Indices 0-23
+                        labels: Array.from({length: 24}, (_, h) => h),
                         datasets: [
                             { 
                                 data: temps, 
@@ -393,7 +395,6 @@
                                 }
                             },
                             {
-                                // Marcador "AHORA"
                                 data: temps.map((_, h) => h === currentHour ? temps[h] : null),
                                 borderColor: '#29903B',
                                 backgroundColor: '#fff',
@@ -434,18 +435,17 @@
                                 grid: { display: false },
                                 border: { display: false },
                                 ticks: { 
-                                    color: '#1e293b', // Etiqueta oscura
-                                    font: { size: 10, weight: '800', family: 'Inter' }, // Nítida y gruesa
+                                    color: '#1e293b',
+                                    font: { size: 10, weight: '800', family: 'Inter' },
                                     maxRotation: 0, 
                                     autoSkip: false,
-                                    // Solo mostramos las horas clave para evitar duplicados
                                     callback: function(value) {
                                         if (value === 0) return '00H';
                                         if (value === 6) return '06H';
                                         if (value === 12) return '12H';
                                         if (value === 18) return '18H';
                                         if (value === 23) return '23H';
-                                        return ''; // Oculta el resto
+                                        return '';
                                     }
                                 }
                             }, 
@@ -458,7 +458,7 @@
         }
 
         function updateMainCharts(results) {
-            // === GRÁFICO DE TENDENCIA (Eje Y fijo 15°–40°) ===
+            // === GRÁFICO DE TENDENCIA: Línea con colores dinámicos por temperatura ===
             const ctxTrend = document.getElementById('trendChart').getContext('2d');
             const firstValid = results.find(r => r.data?.daily?.time);
             if (!firstValid) return;
@@ -478,15 +478,35 @@
                     datasets: [{ 
                         data: avgMax7Days, 
                         fill: true,
-                        borderColor: (c) => c.chart.chartArea ? getCachedGradient(c.chart.ctx, c.chart.chartArea, createThermalGradient) : '#0669FE',
+                        borderColor: '#0669FE',
                         backgroundColor: (c) => c.chart.chartArea ? getCachedGradient(c.chart.ctx, c.chart.chartArea, createThermalFade) : 'transparent',
                         borderWidth: 4, 
                         tension: 0.4,
-                        pointBackgroundColor: '#fff',
-                        pointBorderColor: '#0669FE',
+                        pointBackgroundColor: (ctx) => {
+                            const val = ctx.raw;
+                            if (val < 18) return '#3b82f6';
+                            if (val < 25) return '#f59e0b';
+                            return '#ef4444';
+                        },
+                        pointBorderColor: '#fff',
                         pointBorderWidth: 2,
-                        pointRadius: 4,
-                        pointHoverRadius: 6
+                        pointRadius: 5,
+                        pointHoverRadius: 7,
+                        segment: {
+                            borderColor: ctx => {
+                                const p0 = ctx.p0.parsed.y;
+                                const p1 = ctx.p1.parsed.y;
+                                const mid = (p0 + p1) / 2;
+                                if (p0 === null || p1 === null) return '#94a3b8';
+                                if (mid < 18) return '#3b82f6';
+                                if (mid < 25) return '#f59e0b';
+                                return '#ef4444';
+                            },
+                            borderDash: ctx => {
+                                if (ctx.p0.parsed.y === null || ctx.p1.parsed.y === null) return [5, 5];
+                                return undefined;
+                            }
+                        }
                     }] 
                 },
                 options: { 
@@ -496,7 +516,21 @@
                         legend: { display: false },
                         tooltip: {
                             backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                            callbacks: { label: (ctx) => ` Máx. prom: ${ctx.parsed.y?.toFixed(1) || '--'}°C` }
+                            titleColor: '#fff',
+                            bodyColor: '#cbd5e1',
+                            padding: 12,
+                            displayColors: false,
+                            callbacks: {
+                                title: (ctx) => ctx[0].label.charAt(0).toUpperCase() + ctx[0].label.slice(1),
+                                label: (ctx) => {
+                                    const val = ctx.parsed.y;
+                                    let label = ` Máx. prom: ${val?.toFixed(1) || '--'}°C`;
+                                    if (val < 18) label += ' ❄️ Frío';
+                                    else if (val < 25) label += ' ️ Templado';
+                                    else label += ' 🔥 Caluroso';
+                                    return label;
+                                }
+                            }
                         }
                     },
                     scales: {
@@ -505,26 +539,26 @@
                             max: 40,
                             ticks: {
                                 callback: (v) => v + '°',
-                                color: '#0f172a', // Oscuro para mejor visibilidad
+                                color: '#0f172a',
                                 font: { size: 11, weight: '700', family: 'Inter' },
                                 stepSize: 5
                             },
-                            grid: { color: '#f1f5f9', drawBorder: false }, // Líneas sutiles
+                            grid: { color: '#f1f5f9', drawBorder: false },
                             border: { display: false }
                         },
                         x: {
                             grid: { display: false },
                             border: { display: false },
                             ticks: { 
-                                color: '#0f172a', // Oscuro
-                                font: { size: 11, weight: '700', family: 'Inter' } // Más nítido
+                                color: '#0f172a',
+                                font: { size: 11, weight: '700', family: 'Inter' }
                             }
                         }
                     }
                 }
             });
 
-            // === GRÁFICO DE BALANCE REGIONAL ===
+            // === GRÁFICO BALANCE REGIONAL: Lollipop Chart con colores térmicos ===
             const ctxReg = document.getElementById('regionalChart').getContext('2d');
             const regLabels = Object.keys(config.regiones);
             const regData = regLabels.map(reg => {
@@ -538,37 +572,70 @@
                 type: 'bar',
                 data: { 
                     labels: regLabels, 
-                    datasets: [{ 
-                        data: regData, 
-                        backgroundColor: (ctx) => {
-                            const v = ctx.parsed.y;
-                            if (v < 25) return '#3b82f6';
-                            if (v < 32) return '#29903B';
-                            return '#ef4444';
+                    datasets: [
+                        // Líneas verticales (stems)
+                        {
+                            data: regData,
+                            type: 'bar',
+                            backgroundColor: 'rgba(148, 163, 184, 0.3)',
+                            borderWidth: 0,
+                            borderRadius: 0,
+                            barPercentage: 0.05,
+                            categoryPercentage: 0.8,
+                            order: 2
                         },
-                        borderRadius: 8, 
-                        borderSkipped: false,
-                        borderWidth: 0,
-                        hoverBackgroundColor: '#0f172a',
-                        hoverBorderWidth: 2,
-                        hoverBorderColor: '#64748b'
-                    }] 
+                        // Puntos (dots)
+                        {
+                            data: regData,
+                            type: 'scatter',
+                            backgroundColor: regData.map(v => {
+                                if (v === null) return '#94a3b8';
+                                if (v < 25) return '#3b82f6';
+                                if (v < 32) return '#29903B';
+                                return '#ef4444';
+                            }),
+                            borderColor: '#fff',
+                            borderWidth: 2,
+                            pointRadius: 8,
+                            pointHoverRadius: 10,
+                            pointStyle: 'circle',
+                            order: 1
+                        }
+                    ] 
                 },
                 options: { 
                     responsive: true, 
-                    maintainAspectRatio: false, 
+                    maintainAspectRatio: false,
                     plugins: { 
                         legend: { display: false },
-                        tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.95)', callbacks: { label: (ctx) => ` Máx. prom: ${ctx.parsed.y?.toFixed(1) || '--'}°C` } }
+                        tooltip: { 
+                            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                            padding: 12,
+                            callbacks: { 
+                                label: (ctx) => ` Máx. prom: ${ctx.parsed.y?.toFixed(1) || '--'}°C` 
+                            } 
+                        }
                     },
                     scales: {
                         y: {
                             min: 15,
                             max: 40,
-                            ticks: { callback: (v) => v + '°', color: '#64748b', font: { size: 9 } },
-                            grid: { color: 'rgba(148, 163, 184, 0.1)' }
+                            ticks: { 
+                                callback: (v) => v + '°', 
+                                color: '#475569', 
+                                font: { size: 9, weight: '600' } 
+                            },
+                            grid: { color: 'rgba(148, 163, 184, 0.12)' },
+                            border: { display: false }
                         },
-                        x: { grid: { display: false }, ticks: { color: '#475569', font: { size: 9, weight: '600' } } }
+                        x: { 
+                            grid: { display: false }, 
+                            border: { display: false },
+                            ticks: { 
+                                color: '#1e293b', 
+                                font: { size: 10, weight: '700', family: 'Inter' } 
+                            } 
+                        }
                     }
                 }
             });
