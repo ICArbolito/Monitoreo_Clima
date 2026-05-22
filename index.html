@@ -134,14 +134,14 @@
             transition: all 0.2s ease;
         }
         .alert-item:hover {
-            background: rgba(255,255,255,0.05);
+            background: rgba(255,255,255,0.08);
             transform: translateX(2px);
         }
         .extreme-badge {
             transition: all 0.2s ease;
         }
         .extreme-badge:hover {
-            transform: scale(1.05);
+            transform: scale(1.02);
         }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -175,7 +175,7 @@
                     <div id="summary-text" class="summary-text space-y-2 text-slate-300" aria-live="polite">Analizando promedios regionales...</div>
                 </div>
 
-                <!-- SECCIÓN NUEVA: ALERTAS ACTIVAS -->
+                <!-- ALERTAS ACTIVAS -->
                 <div id="alerts-section" class="border-t border-slate-700 pt-4 hidden">
                     <div class="flex items-center justify-between mb-3">
                         <p class="font-bold text-slate-300 uppercase tracking-tight text-[10px] flex items-center gap-2">
@@ -189,7 +189,7 @@
                     </div>
                 </div>
 
-                <!-- SECCIÓN NUEVA: EXTREMOS DEL DÍA -->
+                <!-- EXTREMOS DEL DÍA -->
                 <div id="extremes-section" class="border-t border-slate-700 pt-4">
                     <p class="font-bold text-slate-300 uppercase tracking-tight text-[10px] mb-3 flex items-center gap-2">
                         <i class="fas fa-chart-bar text-blue-400"></i>
@@ -358,6 +358,7 @@
             }
         }
 
+        // ✅ RESUMEN LIMPIO: Se eliminó la línea de "Inestabilidad en X zonas"
         function generarResumen(results) {
             const sumBox = document.getElementById('summary-text');
             const validMax = results.map(r => r.data.daily.temperature_2m_max[0]).filter(v => !isNaN(v));
@@ -371,24 +372,19 @@
             const avgHoy = validMax.reduce((a, b) => a + b, 0) / validMax.length;
             const avgProx = validMaxTomorrow.reduce((a, b) => a + b, 0) / validMaxTomorrow.length;
             const dif = avgProx - avgHoy;
-            const lluviaZonas = results.filter(r => r.data?.daily?.precipitation_probability_max?.[0] > 40);
 
             let html = `<p>El promedio regional proyecta un <span class="${dif >= 0 ? 'text-orange-500' : 'text-blue-500'} font-bold">${dif >= 0 ? 'alza' : 'baja'}</span> de <span class="font-bold">${Math.abs(dif).toFixed(1)}°C</span> para mañana.</p>`;
             html += `<p class="mt-2">Máxima promedio colectiva estimada: <span class="font-bold text-slate-700">${Math.round(avgHoy)}°C</span>.</p>`;
-            if (lluviaZonas.length > 0) {
-                html += `<p class="mt-2 text-red-500 font-bold flex items-center gap-1"><i class="fas fa-cloud-rain"></i> Inestabilidad en ${lluviaZonas.length} zona${lluviaZonas.length > 1 ? 's' : ''} operativa${lluviaZonas.length > 1 ? 's' : ''}.</p>`;
-            } else {
-                html += `<p class="mt-2 text-green-600 font-bold flex items-center gap-1"><i class="fas fa-check-circle"></i> Operación sin riesgos de precipitación regional.</p>`;
-            }
+            
             sumBox.innerHTML = html;
         }
 
+        // ✅ ALERTAS CON VALORES ESPECÍFICOS (% o °)
         function updateAlerts(results) {
             const alertsSection = document.getElementById('alerts-section');
             const alertsList = document.getElementById('alerts-list');
             const alertCount = document.getElementById('alert-count');
             
-            // Identificar alertas: lluvia > 60%, viento fuerte (simulado), temperaturas extremas
             const alerts = [];
             
             results.forEach(r => {
@@ -399,7 +395,6 @@
                 if (precip > 60) {
                     alerts.push({
                         ciudad: r.ciudad,
-                        tipo: 'Lluvia',
                         valor: `${precip}%`,
                         icono: 'fa-cloud-rain',
                         color: 'text-blue-400',
@@ -410,7 +405,6 @@
                 if (maxTemp > 32) {
                     alerts.push({
                         ciudad: r.ciudad,
-                        tipo: 'Calor Extremo',
                         valor: `${Math.round(maxTemp)}°`,
                         icono: 'fa-sun',
                         color: 'text-orange-400',
@@ -421,7 +415,6 @@
                 if (temp < 12) {
                     alerts.push({
                         ciudad: r.ciudad,
-                        tipo: 'Frío Intenso',
                         valor: `${Math.round(temp)}°`,
                         icono: 'fa-snowflake',
                         color: 'text-cyan-400',
@@ -441,7 +434,7 @@
                             <i class="fas ${alert.icono} ${alert.color} text-xs"></i>
                             <span class="text-[10px] text-slate-200 font-medium">${alert.ciudad}</span>
                         </div>
-                        <span class="text-[10px] font-bold text-slate-300">${alert.tipo}</span>
+                        <span class="text-[11px] font-bold ${alert.color}">${alert.valor}</span>
                     </div>
                 `).join('');
             } else {
@@ -450,19 +443,16 @@
         }
 
         function updateExtremes(results) {
-            // Encontrar ciudad más calurosa (máxima del día)
             const hottest = results.reduce((max, r) => {
                 const temp = r.data.daily?.temperature_2m_max?.[0] || 0;
                 return temp > max.temp ? { ciudad: r.ciudad, temp: temp } : max;
             }, { ciudad: '--', temp: -999 });
             
-            // Encontrar ciudad más fría (actual)
             const coldest = results.reduce((min, r) => {
                 const temp = r.data.current_weather?.temperature || 999;
                 return temp < min.temp ? { ciudad: r.ciudad, temp: temp } : min;
             }, { ciudad: '--', temp: 999 });
             
-            // Encontrar ciudad con más probabilidad de lluvia
             const rainiest = results.reduce((max, r) => {
                 const precip = r.data.daily?.precipitation_probability_max?.[0] || 0;
                 return precip > max.prob ? { ciudad: r.ciudad, prob: precip } : max;
@@ -476,12 +466,6 @@
             
             document.getElementById('rainiest-city').textContent = rainiest.ciudad;
             document.getElementById('rainiest-prob').textContent = `${rainiest.prob}%`;
-        }
-
-        function getTempColor(temp) {
-            if (temp < 18) return '#3b82f6';
-            if (temp < 25) return '#f59e0b';
-            return '#ef4444';
         }
 
         function updateUI(results) {
@@ -624,7 +608,6 @@
         }
 
         function updateMainCharts(results) {
-            // === GRÁFICO DE TENDENCIA: Línea con colores dinámicos por temperatura ===
             const ctxTrend = document.getElementById('trendChart').getContext('2d');
             const firstValid = results.find(r => r.data?.daily?.time);
             if (!firstValid) return;
@@ -693,7 +676,7 @@
                                     let label = ` Máx. prom: ${val?.toFixed(1) || '--'}°C`;
                                     if (val < 18) label += ' ❄️ Frío';
                                     else if (val < 25) label += ' ️ Templado';
-                                    else label += ' 🔥 Caluroso';
+                                    else label += '  Caluroso';
                                     return label;
                                 }
                             }
@@ -724,7 +707,6 @@
                 }
             });
 
-            // === GRÁFICO BALANCE REGIONAL: Lollipop Chart con colores térmicos ===
             const ctxReg = document.getElementById('regionalChart').getContext('2d');
             const regLabels = Object.keys(config.regiones);
             const regData = regLabels.map(reg => {
@@ -739,7 +721,6 @@
                 data: { 
                     labels: regLabels, 
                     datasets: [
-                        // Líneas verticales (stems)
                         {
                             data: regData,
                             type: 'bar',
@@ -750,7 +731,6 @@
                             categoryPercentage: 0.8,
                             order: 2
                         },
-                        // Puntos (dots)
                         {
                             data: regData,
                             type: 'scatter',
