@@ -162,18 +162,17 @@
             pointer-events: none;
             transition: opacity 0.3s;
         }
-        .error-box {
+        .error-details {
             background: rgba(239, 68, 68, 0.1);
-            border: 2px solid rgba(239, 68, 68, 0.5);
-            padding: 2rem;
-            border-radius: 1rem;
-            max-width: 500px;
-            text-align: center;
-            animation: slideIn 0.3s ease;
-        }
-        @keyframes slideIn {
-            from { transform: translateY(-20px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #fca5a5;
+            max-height: 150px;
+            overflow-y: auto;
         }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -189,8 +188,8 @@
     <!-- Loading Overlay -->
     <div id="loadingOverlay" class="loading-overlay">
         <i class="fas fa-circle-notch fa-spin text-5xl text-green-500"></i>
-        <p class="text-slate-300 font-medium text-lg">Cargando datos climáticos...</p>
-        <p class="text-slate-500 text-sm">Conectando con Open-Meteo API</p>
+        <p class="text-slate-300 font-medium text-lg">Conectando con API...</p>
+        <p id="loadingStatus" class="text-slate-500 text-sm">Iniciando conexión...</p>
     </div>
 
     <div class="flex flex-1 gap-2 overflow-hidden">
@@ -211,7 +210,14 @@
 
                 <div id="auto-summary" class="text-left italic px-1">
                     <p class="font-bold text-slate-400 mb-3 uppercase tracking-tight text-[10px]">Perspectiva Operativa</p>
-                    <div id="summary-text" class="summary-text space-y-2 text-slate-300" aria-live="polite">Esperando datos...</div>
+                    <div id="summary-text" class="summary-text space-y-2 text-slate-300" aria-live="polite">
+                        <div class="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-3">
+                            <p class="text-yellow-400 text-xs font-bold mb-1">
+                                <i class="fas fa-info-circle mr-1"></i> DIAGNÓSTICO
+                            </p>
+                            <p class="text-slate-300 text-[10px]">Presiona F12 y ve a la consola para ver el error específico.</p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- ALERTAS ACTIVAS -->
@@ -223,9 +229,7 @@
                         </p>
                         <span id="alert-count" class="text-[10px] font-black bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">0</span>
                     </div>
-                    <div id="alerts-list" class="space-y-2 max-h-40 overflow-y-auto pr-1">
-                        <!-- Se llena dinámicamente -->
-                    </div>
+                    <div id="alerts-list" class="space-y-2 max-h-40 overflow-y-auto pr-1"></div>
                 </div>
 
                 <!-- EXTREMOS DEL DÍA -->
@@ -245,7 +249,6 @@
                                 <div id="hottest-temp" class="text-[13px] font-black text-orange-500">--°</div>
                             </div>
                         </div>
-                        
                         <div class="extreme-badge flex items-center justify-between bg-gradient-to-r from-blue-500/20 to-cyan-500/20 px-3 py-2 rounded-lg border border-blue-500/30">
                             <div class="flex items-center gap-2">
                                 <i class="fas fa-snowflake text-blue-400 text-xs"></i>
@@ -256,7 +259,6 @@
                                 <div id="coldest-temp" class="text-[13px] font-black text-blue-400">--°</div>
                             </div>
                         </div>
-                        
                         <div class="extreme-badge flex items-center justify-between bg-gradient-to-r from-green-500/20 to-emerald-500/20 px-3 py-2 rounded-lg border border-green-500/30">
                             <div class="flex items-center gap-2">
                                 <i class="fas fa-tint text-green-400 text-xs"></i>
@@ -351,206 +353,193 @@
             return gradient;
         }
 
-        // ✅ DATOS DE DEMOSTRACIÓN (fallback)
-        const demoData = {
-            "León": { current: 23, max: 30, min: 16, precip: 84 },
-            "Irapuato": { current: 23, max: 28, min: 15, precip: 68 },
-            "Querétaro": { current: 25, max: 31, min: 17, precip: 74 },
-            "Arandas": { current: 22, max: 29, min: 14, precip: 92 },
-            "Lagos de Moreno": { current: 21, max: 28, min: 13, precip: 71 },
-            "Zapotlanejo": { current: 24, max: 33, min: 16, precip: 45 },
-            "Zamora": { current: 20, max: 27, min: 12, precip: 88 },
-            "La Piedad": { current: 22, max: 29, min: 14, precip: 76 },
-            "Aguascalientes": { current: 23, max: 30, min: 15, precip: 52 }
-        };
+        // ✅ TEST DE CONEXIÓN A API
+        async function testAPIConnection() {
+            const loadingStatus = document.getElementById('loadingStatus');
+            
+            try {
+                loadingStatus.textContent = 'Probando conexión con Open-Meteo...';
+                
+                // Test simple con una ciudad
+                const testUrl = 'https://api.open-meteo.com/v1/forecast?latitude=21.12&longitude=-101.68&current_weather=true&timezone=auto';
+                
+                console.log('🔍 Probando API:', testUrl);
+                
+                const response = await fetch(testUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                    },
+                    mode: 'cors'
+                });
+                
+                console.log('📡 Status:', response.status);
+                console.log('📡 Headers:', Object.fromEntries(response.headers.entries()));
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                console.log('✅ API responde correctamente:', data);
+                
+                return { success: true, data };
+                
+            } catch (error) {
+                console.error('❌ Error de conexión:', error);
+                return { 
+                    success: false, 
+                    error: error.message,
+                    details: error.toString()
+                };
+            }
+        }
 
         async function cargarClima() {
             const btn = document.getElementById('refreshIcon');
             const summary = document.getElementById('summary-text');
             const loadingOverlay = document.getElementById('loadingOverlay');
+            const loadingStatus = document.getElementById('loadingStatus');
             const kpis = ['kpiCurrent', 'kpiMax', 'kpiMin'].map(id => document.getElementById(id));
             
             btn.classList.add('fa-spin');
+            loadingOverlay?.classList.remove('hidden');
             
-            // TIMEOUT GLOBAL de 15 segundos
-            const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('Timeout: La API no respondió en 15 segundos')), 15000);
-            });
-            
-            const fetchPromise = (async () => {
-                try {
-                    console.log('🌡️ Iniciando carga de datos...');
-                    loadingOverlay?.classList.remove('hidden');
-                    summary.textContent = 'Conectando con API...';
-                    kpis.forEach(k => {
-                        k.classList.add('opacity-50');
-                        k.textContent = '--°';
-                    });
-                    
-                    const results = [];
-                    let successCount = 0;
-                    let errorCount = 0;
-                    
-                    for (const cd of cds) {
-                        try {
-                            const url = `https://api.open-meteo.com/v1/forecast?latitude=${cd.lat}&longitude=${cd.lon}&current_weather=true&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=America/Mexico_City`;
-                            
-                            console.log(`📡 Solicitando datos para ${cd.ciudad}...`);
-                            
-                            const controller = new AbortController();
-                            const requestTimeout = setTimeout(() => controller.abort(), 8000);
-                            
-                            const resp = await fetch(url, { 
-                                signal: controller.signal,
-                                headers: { 'Accept': 'application/json' }
-                            });
-                            clearTimeout(requestTimeout);
-                            
-                            if (!resp.ok) {
-                                console.warn(`❌ ${cd.ciudad}: HTTP ${resp.status}`);
-                                errorCount++;
-                                continue;
-                            }
-                            
-                            const data = await resp.json();
-                            
-                            // Validar que tengamos datos útiles
-                            if (!data.current_weather || !data.daily?.temperature_2m_max?.length) {
-                                console.warn(`❌ ${cd.ciudad}: Datos incompletos`);
-                                errorCount++;
-                                continue;
-                            }
-                            
-                            results.push({ ...cd, data });
-                            successCount++;
-                            console.log(`✅ ${cd.ciudad}: OK (${data.current_weather.temperature}°C)`);
-                            
-                            await new Promise(resolve => setTimeout(resolve, 300));
-                            
-                        } catch (error) {
-                            console.error(`❌ Error en ${cd.ciudad}:`, error.message);
-                            errorCount++;
-                        }
-                    }
-                    
-                    console.log(`\n📊 Resumen: ${successCount} exitosas, ${errorCount} fallidas`);
-                    
-                    if (results.length === 0) {
-                        throw new Error('Ninguna ciudad respondió correctamente');
-                    }
-                    
-                    const validResults = results.filter(r => 
-                        r.data?.daily?.temperature_2m_max?.[0] !== undefined && 
-                        !isNaN(r.data.daily.temperature_2m_max[0])
-                    );
-                    
-                    if (validResults.length === 0) {
-                        throw new Error('Datos inválidos recibidos');
-                    }
-                    
-                    // Actualizar UI
-                    updateUI(validResults);
-                    generarResumen(validResults);
-                    updateAlerts(validResults);
-                    updateExtremes(validResults);
-                    
-                    // Animación de actualización
-                    kpis.forEach(k => {
-                        k.classList.add('updated');
-                        setTimeout(() => k.classList.remove('updated'), 400);
-                    });
-                    
-                    console.log('✅ Carga completada exitosamente');
-                    
-                } catch (error) {
-                    console.error('❌ Error crítico:', error);
-                    
-                    // USAR DATOS DE DEMOSTRACIÓN como fallback
-                    console.log('📦 Usando datos de demostración...');
-                    loadDemoData();
-                    
-                    throw error;
-                } finally {
-                    // SIEMPRE ocultar loading
-                    loadingOverlay?.classList.add('hidden');
-                    btn.classList.remove('fa-spin');
-                    kpis.forEach(k => k.classList.remove('opacity-50'));
-                    document.getElementById('lastUpdate').textContent = `SYNC: ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
-                }
-            })();
-            
-            // Race entre fetch y timeout
             try {
-                await Promise.race([fetchPromise, timeoutPromise]);
-            } catch (error) {
-                console.error('Timeout o error:', error.message);
-                // El loading ya se ocultó en el finally de fetchPromise
-            }
-        }
-
-        // ✅ FUNCIÓN DE DEMOSTRACIÓN
-        function loadDemoData() {
-            console.log('🎭 Cargando datos de demostración...');
-            
-            const results = cds.map(cd => ({
-                ...cd,
-                data: {
-                    current_weather: {
-                        temperature: demoData[cd.ciudad]?.current || 20,
-                        windspeed: 10,
-                        winddirection: 180,
-                        weathercode: 0,
-                        time: new Date().toISOString()
-                    },
-                    daily: {
-                        time: Array.from({length: 7}, (_, i) => {
-                            const d = new Date();
-                            d.setDate(d.getDate() + i);
-                            return d.toISOString().split('T')[0];
-                        }),
-                        temperature_2m_max: Array.from({length: 7}, () => demoData[cd.ciudad]?.max || 28),
-                        temperature_2m_min: Array.from({length: 7}, () => demoData[cd.ciudad]?.min || 15),
-                        precipitation_probability_max: Array.from({length: 7}, () => demoData[cd.ciudad]?.precip || 50)
-                    },
-                    hourly: {
-                        time: Array.from({length: 24}, (_, i) => {
-                            const d = new Date();
-                            d.setHours(d.getHours() + i);
-                            return d.toISOString();
-                        }),
-                        temperature_2m: Array.from({length: 24}, (_, i) => {
-                            const base = demoData[cd.ciudad]?.current || 20;
-                            const hour = (new Date().getHours() + i) % 24;
-                            // Simular curva de temperatura diaria
-                            if (hour >= 6 && hour <= 15) return base + (hour - 6) * 0.8;
-                            if (hour > 15 && hour <= 20) return base + 7 - (hour - 15) * 0.5;
-                            return base - 3;
-                        })
+                // PRIMERO: Testear conexión
+                const testResult = await testAPIConnection();
+                
+                if (!testResult.success) {
+                    throw new Error(`API no responde: ${testResult.error}. Revisa la consola (F12) para más detalles.`);
+                }
+                
+                loadingStatus.textContent = 'Cargando datos de ciudades...';
+                summary.innerHTML = '<p class="text-slate-400">Procesando datos...</p>';
+                
+                // Cargar datos de todas las ciudades
+                const results = [];
+                let successCount = 0;
+                let errorCount = 0;
+                const errors = [];
+                
+                for (let i = 0; i < cds.length; i++) {
+                    const cd = cds[i];
+                    loadingStatus.textContent = `Cargando ${cd.ciudad} (${i+1}/${cds.length})...`;
+                    
+                    try {
+                        const url = `https://api.open-meteo.com/v1/forecast?latitude=${cd.lat}&longitude=${cd.lon}&current_weather=true&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=America/Mexico_City`;
+                        
+                        console.log(`📡 Solicitando: ${cd.ciudad}`);
+                        
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 10000);
+                        
+                        const resp = await fetch(url, { 
+                            signal: controller.signal,
+                            headers: { 'Accept': 'application/json' }
+                        });
+                        clearTimeout(timeoutId);
+                        
+                        if (!resp.ok) {
+                            const errorMsg = `${cd.ciudad}: HTTP ${resp.status}`;
+                            console.warn(`❌ ${errorMsg}`);
+                            errors.push(errorMsg);
+                            errorCount++;
+                            continue;
+                        }
+                        
+                        const data = await resp.json();
+                        
+                        if (!data.current_weather || !data.daily?.temperature_2m_max?.length) {
+                            const errorMsg = `${cd.ciudad}: Datos incompletos`;
+                            console.warn(`❌ ${errorMsg}`);
+                            errors.push(errorMsg);
+                            errorCount++;
+                            continue;
+                        }
+                        
+                        results.push({ ...cd, data });
+                        successCount++;
+                        console.log(`✅ ${cd.ciudad}: ${data.current_weather.temperature}°C`);
+                        
+                        // Delay para evitar rate limiting
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                    } catch (error) {
+                        const errorMsg = `${cd.ciudad}: ${error.message}`;
+                        console.error(`❌ ${errorMsg}`);
+                        errors.push(errorMsg);
+                        errorCount++;
                     }
                 }
-            }));
-            
-            // Mostrar banner de demo
-            const summary = document.getElementById('summary-text');
-            summary.innerHTML = `
-                <div class="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-3 mb-2">
-                    <p class="text-yellow-400 text-xs font-bold mb-1">
-                        <i class="fas fa-exclamation-triangle mr-1"></i> MODO DEMOSTRACIÓN
-                    </p>
-                    <p class="text-slate-300 text-[10px]">No se pudo conectar con la API. Mostrando datos de ejemplo.</p>
-                </div>
-                <p class="text-slate-400">Verifica tu conexión a internet o intenta más tarde.</p>
-            `;
-            
-            updateUI(results);
-            updateAlerts(results);
-            updateExtremes(results);
+                
+                console.log(`\n📊 RESULTADOS: ${successCount} exitosas, ${errorCount} fallidas`);
+                if (errors.length > 0) {
+                    console.log('❌ Errores:', errors);
+                }
+                
+                if (results.length === 0) {
+                    throw new Error(`Ninguna ciudad cargó correctamente. Errores: ${errors.join(', ')}`);
+                }
+                
+                const validResults = results.filter(r => 
+                    r.data?.daily?.temperature_2m_max?.[0] !== undefined && 
+                    !isNaN(r.data.daily.temperature_2m_max[0])
+                );
+                
+                if (validResults.length === 0) {
+                    throw new Error('Datos inválidos recibidos de la API');
+                }
+                
+                // Actualizar UI
+                updateUI(validResults);
+                generarResumen(validResults);
+                updateAlerts(validResults);
+                updateExtremes(validResults);
+                
+                // Animación
+                kpis.forEach(k => {
+                    k.classList.add('updated');
+                    setTimeout(() => k.classList.remove('updated'), 400);
+                });
+                
+                console.log('✅ Carga completada exitosamente');
+                
+            } catch (error) {
+                console.error('❌ Error crítico:', error);
+                
+                // Mostrar error detallado
+                summary.innerHTML = `
+                    <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-3 mb-2">
+                        <p class="text-red-400 text-xs font-bold mb-1">
+                            <i class="fas fa-exclamation-triangle mr-1"></i> ERROR DE CONEXIÓN
+                        </p>
+                        <p class="text-slate-300 text-[10px] mb-2">${error.message}</p>
+                        <button onclick="cargarClima()" class="w-full px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-bold transition-colors">
+                            <i class="fas fa-sync-alt mr-1"></i> Reintentar
+                        </button>
+                    </div>
+                    <div class="error-details">
+                        <p class="text-xs font-bold mb-1">Detalles técnicos:</p>
+                        <p>${error.toString()}</p>
+                        <p class="mt-2 text-[10px] text-slate-400">
+                            💡 Si ves error de CORS, puede ser que GitHub Pages esté bloqueando la petición. 
+                            Intenta abrir el archivo localmente o usar un proxy CORS.
+                        </p>
+                    </div>
+                `;
+                
+            } finally {
+                loadingOverlay?.classList.add('hidden');
+                btn.classList.remove('fa-spin');
+                kpis.forEach(k => k.classList.remove('opacity-50'));
+                document.getElementById('lastUpdate').textContent = `SYNC: ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+            }
         }
 
         function generarResumen(results) {
             const sumBox = document.getElementById('summary-text');
-            // Si ya hay banner de demo, no lo sobrescribas
-            if (sumBox.querySelector('.bg-yellow-500')) return;
+            if (sumBox.querySelector('.bg-red-500')) return; // Si hay error, no sobrescribir
             
             const validMax = results.map(r => r.data.daily.temperature_2m_max[0]).filter(v => !isNaN(v));
             const validMaxTomorrow = results.map(r => r.data.daily.temperature_2m_max[1]).filter(v => !isNaN(v));
@@ -711,11 +700,8 @@
                 const temps = hourlyData.temperature_2m?.slice(0, 24) || [];
                 const currentHour = new Date().getHours();
                 
-                // Destruir gráfico existente si hay
                 const existingChart = Chart.getChart(ctx.canvas);
-                if (existingChart) {
-                    existingChart.destroy();
-                }
+                if (existingChart) existingChart.destroy();
                 
                 new Chart(ctx, {
                     type: 'line',
@@ -985,12 +971,11 @@
         
         // Inicializar
         window.addEventListener('DOMContentLoaded', () => {
-            console.log('🌡️ Baalam Weather Dashboard v2.0');
-            console.log('📡 Conectando...');
+            console.log('🌡️ Baalam Weather Dashboard v3.0 - Diagnóstico mejorado');
+            console.log(' Probando conexión...');
             cargarClima();
         });
         
-        // Refresh con tecla R
         document.addEventListener('keydown', (e) => {
             if (e.key.toLowerCase() === 'r' && !e.target.matches('input, textarea, [contenteditable]')) {
                 e.preventDefault();
