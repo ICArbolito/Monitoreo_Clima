@@ -188,8 +188,8 @@
     <!-- Loading Overlay -->
     <div id="loadingOverlay" class="loading-overlay">
         <i class="fas fa-circle-notch fa-spin text-5xl text-green-500"></i>
-        <p class="text-slate-300 font-medium text-lg">Conectando con API...</p>
-        <p id="loadingStatus" class="text-slate-500 text-sm">Iniciando conexión...</p>
+        <p class="text-slate-300 font-medium text-lg">Conectando con API (vía Proxy)...</p>
+        <p id="loadingStatus" class="text-slate-500 text-sm">Iniciando conexión segura...</p>
     </div>
 
     <div class="flex flex-1 gap-2 overflow-hidden">
@@ -353,45 +353,32 @@
             return gradient;
         }
 
-        // ✅ TEST DE CONEXIÓN A API
+        // ✅ SOLUCIÓN CORS: Usamos corsproxy.io para saltar la restricción
+        const PROXY_URL = 'https://corsproxy.io/?';
+        const API_BASE = 'https://api.open-meteo.com/v1/forecast';
+
         async function testAPIConnection() {
             const loadingStatus = document.getElementById('loadingStatus');
+            const testUrl = `${PROXY_URL}${encodeURIComponent(API_BASE + '?latitude=21.12&longitude=-101.68&current_weather=true&timezone=auto')}`;
             
             try {
-                loadingStatus.textContent = 'Probando conexión con Open-Meteo...';
-                
-                // Test simple con una ciudad
-                const testUrl = 'https://api.open-meteo.com/v1/forecast?latitude=21.12&longitude=-101.68&current_weather=true&timezone=auto';
-                
-                console.log('🔍 Probando API:', testUrl);
+                loadingStatus.textContent = 'Probando conexión a través de Proxy...';
+                console.log('🔍 Probando API vía Proxy:', testUrl);
                 
                 const response = await fetch(testUrl, {
                     method: 'GET',
-                    headers: {
-                        'Accept': 'application/json',
-                    },
-                    mode: 'cors'
+                    headers: { 'Accept': 'application/json' }
                 });
                 
-                console.log('📡 Status:', response.status);
-                console.log('📡 Headers:', Object.fromEntries(response.headers.entries()));
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 
                 const data = await response.json();
-                console.log('✅ API responde correctamente:', data);
-                
+                console.log('✅ API responde correctamente vía Proxy');
                 return { success: true, data };
                 
             } catch (error) {
                 console.error('❌ Error de conexión:', error);
-                return { 
-                    success: false, 
-                    error: error.message,
-                    details: error.toString()
-                };
+                return { success: false, error: error.message };
             }
         }
 
@@ -406,109 +393,71 @@
             loadingOverlay?.classList.remove('hidden');
             
             try {
-                // PRIMERO: Testear conexión
+                // Test de conexión primero
                 const testResult = await testAPIConnection();
-                
                 if (!testResult.success) {
-                    throw new Error(`API no responde: ${testResult.error}. Revisa la consola (F12) para más detalles.`);
+                    throw new Error(`Proxy falla: ${testResult.error}`);
                 }
                 
                 loadingStatus.textContent = 'Cargando datos de ciudades...';
                 summary.innerHTML = '<p class="text-slate-400">Procesando datos...</p>';
                 
-                // Cargar datos de todas las ciudades
                 const results = [];
                 let successCount = 0;
-                let errorCount = 0;
-                const errors = [];
                 
                 for (let i = 0; i < cds.length; i++) {
                     const cd = cds[i];
                     loadingStatus.textContent = `Cargando ${cd.ciudad} (${i+1}/${cds.length})...`;
                     
                     try {
-                        const url = `https://api.open-meteo.com/v1/forecast?latitude=${cd.lat}&longitude=${cd.lon}&current_weather=true&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=America/Mexico_City`;
+                        // Construimos la URL original y la pasamos por el proxy
+                        const originalUrl = `${API_BASE}?latitude=${cd.lat}&longitude=${cd.lon}&current_weather=true&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=America/Mexico_City`;
+                        const proxyUrl = `${PROXY_URL}${encodeURIComponent(originalUrl)}`;
                         
-                        console.log(`📡 Solicitando: ${cd.ciudad}`);
+                        console.log(`📡 Solicitando (vía Proxy): ${cd.ciudad}`);
                         
                         const controller = new AbortController();
                         const timeoutId = setTimeout(() => controller.abort(), 10000);
                         
-                        const resp = await fetch(url, { 
+                        const resp = await fetch(proxyUrl, { 
                             signal: controller.signal,
                             headers: { 'Accept': 'application/json' }
                         });
                         clearTimeout(timeoutId);
                         
-                        if (!resp.ok) {
-                            const errorMsg = `${cd.ciudad}: HTTP ${resp.status}`;
-                            console.warn(`❌ ${errorMsg}`);
-                            errors.push(errorMsg);
-                            errorCount++;
-                            continue;
-                        }
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                         
                         const data = await resp.json();
                         
                         if (!data.current_weather || !data.daily?.temperature_2m_max?.length) {
-                            const errorMsg = `${cd.ciudad}: Datos incompletos`;
-                            console.warn(`❌ ${errorMsg}`);
-                            errors.push(errorMsg);
-                            errorCount++;
-                            continue;
+                            throw new Error('Datos incompletos');
                         }
                         
                         results.push({ ...cd, data });
                         successCount++;
                         console.log(`✅ ${cd.ciudad}: ${data.current_weather.temperature}°C`);
                         
-                        // Delay para evitar rate limiting
-                        await new Promise(resolve => setTimeout(resolve, 500));
+                        await new Promise(resolve => setTimeout(resolve, 200));
                         
                     } catch (error) {
-                        const errorMsg = `${cd.ciudad}: ${error.message}`;
-                        console.error(`❌ ${errorMsg}`);
-                        errors.push(errorMsg);
-                        errorCount++;
+                        console.error(`❌ Error en ${cd.ciudad}:`, error);
                     }
                 }
                 
-                console.log(`\n📊 RESULTADOS: ${successCount} exitosas, ${errorCount} fallidas`);
-                if (errors.length > 0) {
-                    console.log('❌ Errores:', errors);
-                }
+                if (results.length === 0) throw new Error('Ninguna ciudad cargó correctamente');
                 
-                if (results.length === 0) {
-                    throw new Error(`Ninguna ciudad cargó correctamente. Errores: ${errors.join(', ')}`);
-                }
+                updateUI(results);
+                generarResumen(results);
+                updateAlerts(results);
+                updateExtremes(results);
                 
-                const validResults = results.filter(r => 
-                    r.data?.daily?.temperature_2m_max?.[0] !== undefined && 
-                    !isNaN(r.data.daily.temperature_2m_max[0])
-                );
-                
-                if (validResults.length === 0) {
-                    throw new Error('Datos inválidos recibidos de la API');
-                }
-                
-                // Actualizar UI
-                updateUI(validResults);
-                generarResumen(validResults);
-                updateAlerts(validResults);
-                updateExtremes(validResults);
-                
-                // Animación
                 kpis.forEach(k => {
                     k.classList.add('updated');
                     setTimeout(() => k.classList.remove('updated'), 400);
                 });
                 
-                console.log('✅ Carga completada exitosamente');
-                
             } catch (error) {
                 console.error('❌ Error crítico:', error);
-                
-                // Mostrar error detallado
                 summary.innerHTML = `
                     <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-3 mb-2">
                         <p class="text-red-400 text-xs font-bold mb-1">
@@ -519,16 +468,7 @@
                             <i class="fas fa-sync-alt mr-1"></i> Reintentar
                         </button>
                     </div>
-                    <div class="error-details">
-                        <p class="text-xs font-bold mb-1">Detalles técnicos:</p>
-                        <p>${error.toString()}</p>
-                        <p class="mt-2 text-[10px] text-slate-400">
-                            💡 Si ves error de CORS, puede ser que GitHub Pages esté bloqueando la petición. 
-                            Intenta abrir el archivo localmente o usar un proxy CORS.
-                        </p>
-                    </div>
                 `;
-                
             } finally {
                 loadingOverlay?.classList.add('hidden');
                 btn.classList.remove('fa-spin');
@@ -539,13 +479,13 @@
 
         function generarResumen(results) {
             const sumBox = document.getElementById('summary-text');
-            if (sumBox.querySelector('.bg-red-500')) return; // Si hay error, no sobrescribir
+            if (sumBox.querySelector('.bg-red-500')) return;
             
             const validMax = results.map(r => r.data.daily.temperature_2m_max[0]).filter(v => !isNaN(v));
             const validMaxTomorrow = results.map(r => r.data.daily.temperature_2m_max[1]).filter(v => !isNaN(v));
             
             if (validMax.length === 0 || validMaxTomorrow.length === 0) {
-                sumBox.textContent = 'Datos insuficientes para generar perspectiva.';
+                sumBox.textContent = 'Datos insuficientes.';
                 return;
             }
             
@@ -555,7 +495,6 @@
 
             let html = `<p>El promedio regional proyecta un <span class="${dif >= 0 ? 'text-orange-500' : 'text-blue-500'} font-bold">${dif >= 0 ? 'alza' : 'baja'}</span> de <span class="font-bold">${Math.abs(dif).toFixed(1)}°C</span> para mañana.</p>`;
             html += `<p class="mt-2">Máxima promedio colectiva estimada: <span class="font-bold text-slate-700">${Math.round(avgHoy)}°C</span>.</p>`;
-            
             sumBox.innerHTML = html;
         }
 
@@ -563,7 +502,6 @@
             const alertsSection = document.getElementById('alerts-section');
             const alertsList = document.getElementById('alerts-list');
             const alertCount = document.getElementById('alert-count');
-            
             const alerts = [];
             
             results.forEach(r => {
@@ -571,42 +509,14 @@
                 const temp = r.data.current_weather?.temperature || 0;
                 const maxTemp = r.data.daily?.temperature_2m_max?.[0] || 0;
                 
-                if (precip > 60) {
-                    alerts.push({
-                        ciudad: r.ciudad,
-                        valor: `${precip}%`,
-                        icono: 'fa-cloud-rain',
-                        color: 'text-blue-400',
-                        bg: 'bg-blue-500/20',
-                        border: 'border-blue-500/30'
-                    });
-                }
-                if (maxTemp > 32) {
-                    alerts.push({
-                        ciudad: r.ciudad,
-                        valor: `${Math.round(maxTemp)}°`,
-                        icono: 'fa-sun',
-                        color: 'text-orange-400',
-                        bg: 'bg-orange-500/20',
-                        border: 'border-orange-500/30'
-                    });
-                }
-                if (temp < 12) {
-                    alerts.push({
-                        ciudad: r.ciudad,
-                        valor: `${Math.round(temp)}°`,
-                        icono: 'fa-snowflake',
-                        color: 'text-cyan-400',
-                        bg: 'bg-cyan-500/20',
-                        border: 'border-cyan-500/30'
-                    });
-                }
+                if (precip > 60) alerts.push({ ciudad: r.ciudad, valor: `${precip}%`, icono: 'fa-cloud-rain', color: 'text-blue-400', bg: 'bg-blue-500/20', border: 'border-blue-500/30' });
+                if (maxTemp > 32) alerts.push({ ciudad: r.ciudad, valor: `${Math.round(maxTemp)}°`, icono: 'fa-sun', color: 'text-orange-400', bg: 'bg-orange-500/20', border: 'border-orange-500/30' });
+                if (temp < 12) alerts.push({ ciudad: r.ciudad, valor: `${Math.round(temp)}°`, icono: 'fa-snowflake', color: 'text-cyan-400', bg: 'bg-cyan-500/20', border: 'border-cyan-500/30' });
             });
             
             if (alerts.length > 0) {
                 alertsSection.classList.remove('hidden');
                 alertCount.textContent = alerts.length;
-                
                 alertsList.innerHTML = alerts.map(alert => `
                     <div class="alert-item flex items-center justify-between ${alert.bg} border ${alert.border} px-3 py-2 rounded-lg">
                         <div class="flex items-center gap-2">
@@ -639,10 +549,8 @@
             
             document.getElementById('hottest-city').textContent = hottest.ciudad;
             document.getElementById('hottest-temp').textContent = `${Math.round(hottest.temp)}°`;
-            
             document.getElementById('coldest-city').textContent = coldest.ciudad;
             document.getElementById('coldest-temp').textContent = `${Math.round(coldest.temp)}°`;
-            
             document.getElementById('rainiest-city').textContent = rainiest.ciudad;
             document.getElementById('rainiest-prob').textContent = `${rainiest.prob}%`;
         }
@@ -652,13 +560,9 @@
             const validMax = results.map(r => r.data.daily?.temperature_2m_max?.[0]).filter(v => v !== undefined && !isNaN(v));
             const validMin = results.map(r => r.data.daily?.temperature_2m_min?.[0]).filter(v => v !== undefined && !isNaN(v));
             
-            const avgCurrent = validCurrent.length ? validCurrent.reduce((a,b) => a+b, 0) / validCurrent.length : 0;
-            const avgMaxToday = validMax.length ? validMax.reduce((a,b) => a+b, 0) / validMax.length : 0;
-            const avgMinToday = validMin.length ? validMin.reduce((a,b) => a+b, 0) / validMin.length : 0;
-
-            document.getElementById('kpiCurrent').textContent = Math.round(avgCurrent) + '°';
-            document.getElementById('kpiMax').textContent = Math.round(avgMaxToday) + '°';
-            document.getElementById('kpiMin').textContent = Math.round(avgMinToday) + '°';
+            document.getElementById('kpiCurrent').textContent = Math.round(validCurrent.reduce((a,b) => a+b, 0) / validCurrent.length) + '°';
+            document.getElementById('kpiMax').textContent = Math.round(validMax.reduce((a,b) => a+b, 0) / validMax.length) + '°';
+            document.getElementById('kpiMin').textContent = Math.round(validMin.reduce((a,b) => a+b, 0) / validMin.length) + '°';
             
             document.getElementById('dashboard').innerHTML = results.map((item, i) => {
                 const temp = item.data.current_weather?.temperature ?? 0;
@@ -713,76 +617,16 @@
                                 fill: true,
                                 borderColor: (c) => c.chart.chartArea ? getCachedGradient(c.chart.ctx, c.chart.chartArea, createThermalGradient) : '#ef4444',
                                 backgroundColor: (c) => c.chart.chartArea ? getCachedGradient(c.chart.ctx, c.chart.chartArea, createThermalFade) : 'transparent',
-                                borderWidth: 2.5, 
-                                pointRadius: 0, 
-                                tension: 0.4,
-                                segment: {
-                                    borderColor: ctx => {
-                                        const p0 = ctx.p0.parsed.y, p1 = ctx.p1.parsed.y;
-                                        const mid = (p0 + p1) / 2;
-                                        if (mid < 18) return '#3b82f6';
-                                        if (mid < 25) return '#f59e0b';
-                                        return '#ef4444';
-                                    }
-                                }
+                                borderWidth: 2.5, pointRadius: 0, tension: 0.4,
+                                segment: { borderColor: ctx => { const mid = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2; return mid < 18 ? '#3b82f6' : mid < 25 ? '#f59e0b' : '#ef4444'; } }
                             },
-                            {
-                                data: temps.map((_, h) => h === currentHour ? temps[h] : null),
-                                borderColor: '#29903B',
-                                backgroundColor: '#fff',
-                                pointRadius: 5,
-                                pointHoverRadius: 7,
-                                pointBorderWidth: 2,
-                                pointBorderColor: '#29903B',
-                                fill: false,
-                                tension: 0,
-                                pointStyle: 'circle'
-                            }
+                            { data: temps.map((_, h) => h === currentHour ? temps[h] : null), borderColor: '#29903B', backgroundColor: '#fff', pointRadius: 5, pointHoverRadius: 7, pointBorderWidth: 2, pointBorderColor: '#29903B', fill: false, tension: 0, pointStyle: 'circle' }
                         ] 
                     },
                     options: { 
-                        responsive: true, 
-                        maintainAspectRatio: false, 
-                        plugins: { 
-                            legend: { display: false },
-                            tooltip: {
-                                enabled: true,
-                                backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                                titleColor: '#fff',
-                                bodyColor: '#cbd5e1',
-                                padding: 10,
-                                displayColors: false,
-                                callbacks: {
-                                    title: (ctx) => {
-                                        const h = parseInt(ctx[0].label);
-                                        return `${h.toString().padStart(2, '0')}:00`;
-                                    },
-                                    label: (ctx) => ` ${ctx.parsed.y.toFixed(1)}°C`
-                                }
-                            }
-                        }, 
-                        scales: { 
-                            x: { 
-                                display: true,
-                                grid: { display: false },
-                                border: { display: false },
-                                ticks: { 
-                                    color: '#1e293b',
-                                    font: { size: 10, weight: '800', family: 'Inter' },
-                                    maxRotation: 0, 
-                                    autoSkip: false,
-                                    callback: function(value) {
-                                        if (value === 0) return '00H';
-                                        if (value === 6) return '06H';
-                                        if (value === 12) return '12H';
-                                        if (value === 18) return '18H';
-                                        if (value === 23) return '23H';
-                                        return '';
-                                    }
-                                }
-                            }, 
-                            y: { display: false, min: 10, max: 40 } 
-                        }
+                        responsive: true, maintainAspectRatio: false, 
+                        plugins: { legend: { display: false }, tooltip: { enabled: true, backgroundColor: 'rgba(15, 23, 42, 0.95)', titleColor: '#fff', bodyColor: '#cbd5e1', padding: 10, displayColors: false, callbacks: { title: (ctx) => `${parseInt(ctx[0].label).toString().padStart(2, '0')}:00`, label: (ctx) => ` ${ctx.parsed.y.toFixed(1)}°C` } } }, 
+                        scales: { x: { display: true, grid: { display: false }, border: { display: false }, ticks: { color: '#1e293b', font: { size: 10, weight: '800', family: 'Inter' }, maxRotation: 0, autoSkip: false, callback: function(value) { if ([0, 6, 12, 18, 23].includes(value)) return value + 'H'; return ''; } } }, y: { display: false, min: 10, max: 40 } } 
                     }
                 });
             });
@@ -807,84 +651,20 @@
                 data: { 
                     labels: firstValid.data.daily.time.map(t => new Date(t).toLocaleDateString('es-MX', {weekday: 'short'})).map(d => d.replace('.', '')), 
                     datasets: [{ 
-                        data: avgMax7Days, 
-                        fill: true,
-                        borderColor: '#0669FE',
+                        data: avgMax7Days, fill: true, borderColor: '#0669FE',
                         backgroundColor: (c) => c.chart.chartArea ? getCachedGradient(c.chart.ctx, c.chart.chartArea, createThermalFade) : 'transparent',
-                        borderWidth: 4, 
-                        tension: 0.4,
-                        pointBackgroundColor: (ctx) => {
-                            const val = ctx.raw;
-                            if (val < 18) return '#3b82f6';
-                            if (val < 25) return '#f59e0b';
-                            return '#ef4444';
-                        },
-                        pointBorderColor: '#fff',
-                        pointBorderWidth: 2,
-                        pointRadius: 5,
-                        pointHoverRadius: 7,
-                        segment: {
-                            borderColor: ctx => {
-                                const p0 = ctx.p0.parsed.y;
-                                const p1 = ctx.p1.parsed.y;
-                                const mid = (p0 + p1) / 2;
-                                if (p0 === null || p1 === null) return '#94a3b8';
-                                if (mid < 18) return '#3b82f6';
-                                if (mid < 25) return '#f59e0b';
-                                return '#ef4444';
-                            },
-                            borderDash: ctx => {
-                                if (ctx.p0.parsed.y === null || ctx.p1.parsed.y === null) return [5, 5];
-                                return undefined;
-                            }
-                        }
+                        borderWidth: 4, tension: 0.4,
+                        pointBackgroundColor: (ctx) => { const val = ctx.raw; return val < 18 ? '#3b82f6' : val < 25 ? '#f59e0b' : '#ef4444'; },
+                        pointBorderColor: '#fff', pointBorderWidth: 2, pointRadius: 5, pointHoverRadius: 7,
+                        segment: { borderColor: ctx => { const mid = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2; return mid < 18 ? '#3b82f6' : mid < 25 ? '#f59e0b' : '#ef4444'; } }
                     }] 
                 },
                 options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false, 
-                    plugins: { 
-                        legend: { display: false },
-                        tooltip: {
-                            backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                            titleColor: '#fff',
-                            bodyColor: '#cbd5e1',
-                            padding: 12,
-                            displayColors: false,
-                            callbacks: {
-                                title: (ctx) => ctx[0].label.charAt(0).toUpperCase() + ctx[0].label.slice(1),
-                                label: (ctx) => {
-                                    const val = ctx.parsed.y;
-                                    let label = ` Máx. prom: ${val?.toFixed(1) || '--'}°C`;
-                                    if (val < 18) label += ' ❄️ Frío';
-                                    else if (val < 25) label += ' ️ Templado';
-                                    else label += '  Caluroso';
-                                    return label;
-                                }
-                            }
-                        }
-                    },
+                    responsive: true, maintainAspectRatio: false, 
+                    plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.95)', titleColor: '#fff', bodyColor: '#cbd5e1', padding: 12, displayColors: false, callbacks: { title: (ctx) => ctx[0].label.charAt(0).toUpperCase() + ctx[0].label.slice(1), label: (ctx) => ` Máx. prom: ${ctx.parsed.y?.toFixed(1) || '--'}°C` } } },
                     scales: {
-                        y: {
-                            min: 15,
-                            max: 40,
-                            ticks: {
-                                callback: (v) => v + '°',
-                                color: '#0f172a',
-                                font: { size: 11, weight: '700', family: 'Inter' },
-                                stepSize: 5
-                            },
-                            grid: { color: '#f1f5f9', drawBorder: false },
-                            border: { display: false }
-                        },
-                        x: {
-                            grid: { display: false },
-                            border: { display: false },
-                            ticks: { 
-                                color: '#0f172a',
-                                font: { size: 11, weight: '700', family: 'Inter' }
-                            }
-                        }
+                        y: { min: 15, max: 40, ticks: { callback: (v) => v + '°', color: '#0f172a', font: { size: 11, weight: '700', family: 'Inter' }, stepSize: 5 }, grid: { color: '#f1f5f9', drawBorder: false }, border: { display: false } },
+                        x: { grid: { display: false }, border: { display: false }, ticks: { color: '#0f172a', font: { size: 11, weight: '700', family: 'Inter' } } }
                     }
                 }
             });
@@ -903,76 +683,20 @@
                 data: { 
                     labels: regLabels, 
                     datasets: [
-                        {
-                            data: regData,
-                            type: 'bar',
-                            backgroundColor: 'rgba(148, 163, 184, 0.3)',
-                            borderWidth: 0,
-                            borderRadius: 0,
-                            barPercentage: 0.05,
-                            categoryPercentage: 0.8,
-                            order: 2
-                        },
-                        {
-                            data: regData,
-                            type: 'scatter',
-                            backgroundColor: regData.map(v => {
-                                if (v === null) return '#94a3b8';
-                                if (v < 25) return '#3b82f6';
-                                if (v < 32) return '#29903B';
-                                return '#ef4444';
-                            }),
-                            borderColor: '#fff',
-                            borderWidth: 2,
-                            pointRadius: 8,
-                            pointHoverRadius: 10,
-                            pointStyle: 'circle',
-                            order: 1
-                        }
+                        { data: regData, type: 'bar', backgroundColor: 'rgba(148, 163, 184, 0.3)', borderWidth: 0, borderRadius: 0, barPercentage: 0.05, categoryPercentage: 0.8, order: 2 },
+                        { data: regData, type: 'scatter', backgroundColor: regData.map(v => v === null ? '#94a3b8' : v < 25 ? '#3b82f6' : v < 32 ? '#29903B' : '#ef4444'), borderColor: '#fff', borderWidth: 2, pointRadius: 8, pointHoverRadius: 10, pointStyle: 'circle', order: 1 }
                     ] 
                 },
                 options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false,
-                    plugins: { 
-                        legend: { display: false },
-                        tooltip: { 
-                            backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                            padding: 12,
-                            callbacks: { 
-                                label: (ctx) => ` Máx. prom: ${ctx.parsed.y?.toFixed(1) || '--'}°C` 
-                            } 
-                        }
-                    },
-                    scales: {
-                        y: {
-                            min: 15,
-                            max: 40,
-                            ticks: { 
-                                callback: (v) => v + '°', 
-                                color: '#475569', 
-                                font: { size: 9, weight: '600' } 
-                            },
-                            grid: { color: 'rgba(148, 163, 184, 0.12)' },
-                            border: { display: false }
-                        },
-                        x: { 
-                            grid: { display: false }, 
-                            border: { display: false },
-                            ticks: { 
-                                color: '#1e293b', 
-                                font: { size: 10, weight: '700', family: 'Inter' } 
-                            } 
-                        }
-                    }
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.95'), padding: 12, callbacks: { label: (ctx) => ` Máx. prom: ${ctx.parsed.y?.toFixed(1) || '--'}°C` } } },
+                    scales: { y: { min: 15, max: 40, ticks: { callback: (v) => v + '°', color: '#475569', font: { size: 9, weight: '600' } }, grid: { color: 'rgba(148, 163, 184, 0.12)' }, border: { display: false } }, x: { grid: { display: false }, border: { display: false }, ticks: { color: '#1e293b', font: { size: 10, weight: '700', family: 'Inter' } } } }
                 }
             });
         }
         
-        // Inicializar
         window.addEventListener('DOMContentLoaded', () => {
-            console.log('🌡️ Baalam Weather Dashboard v3.0 - Diagnóstico mejorado');
-            console.log(' Probando conexión...');
+            console.log('🌡️ Baalam Weather Dashboard - FIX CORS');
             cargarClima();
         });
         
