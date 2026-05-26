@@ -143,6 +143,31 @@
         .extreme-badge:hover {
             transform: scale(1.02);
         }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(15, 23, 42, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .loading-overlay.hidden {
+            display: none;
+        }
+        .error-message {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            max-width: 400px;
+            text-align: center;
+        }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { 
@@ -153,6 +178,12 @@
     </style>
 </head>
 <body>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <i class="fas fa-circle-notch fa-spin text-4xl text-green-500"></i>
+        <p class="text-slate-300 font-medium">Cargando datos climáticos...</p>
+    </div>
 
     <div class="flex flex-1 gap-2 overflow-hidden">
         <aside class="sidebar flex flex-col justify-between p-4">
@@ -172,7 +203,7 @@
 
                 <div id="auto-summary" class="text-left italic px-1">
                     <p class="font-bold text-slate-400 mb-3 uppercase tracking-tight text-[10px]">Perspectiva Operativa</p>
-                    <div id="summary-text" class="summary-text space-y-2 text-slate-300" aria-live="polite">Analizando promedios regionales...</div>
+                    <div id="summary-text" class="summary-text space-y-2 text-slate-300" aria-live="polite">Cargando información...</div>
                 </div>
 
                 <!-- ALERTAS ACTIVAS -->
@@ -312,21 +343,56 @@
             return gradient;
         }
 
+        // ✅ MEJORADA: Carga secuencial con retry y mejor manejo de errores
         async function cargarClima() {
             const btn = document.getElementById('refreshIcon');
             const summary = document.getElementById('summary-text');
+            const loadingOverlay = document.getElementById('loadingOverlay');
             const kpis = ['kpiCurrent', 'kpiMax', 'kpiMin'].map(id => document.getElementById(id));
             
             btn.classList.add('fa-spin');
+            loadingOverlay?.classList.remove('hidden');
             summary.textContent = 'Actualizando datos...';
             kpis.forEach(k => k.classList.add('opacity-50'));
             
             try {
-                const results = await Promise.all(cds.map(async (cd) => {
-                    const resp = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${cd.lat}&longitude=${cd.lon}&current_weather=true&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto`);
-                    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
-                    return { ...cd, data: await resp.json() };
-                }));
+                // Carga secuencial con delay para evitar rate limiting
+                const results = [];
+                for (const cd of cds) {
+                    try {
+                        const url = `https://api.open-meteo.com/v1/forecast?latitude=${cd.lat}&longitude=${cd.lon}&current_weather=true&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=America/Mexico_City`;
+                        
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+                        
+                        const resp = await fetch(url, { 
+                            signal: controller.signal,
+                            headers: {
+                                'Accept': 'application/json'
+                            }
+                        });
+                        clearTimeout(timeoutId);
+                        
+                        if (!resp.ok) {
+                            console.warn(`Error API para ${cd.ciudad}: ${resp.status}`);
+                            continue; // Saltar esta ciudad pero continuar con las demás
+                        }
+                        
+                        const data = await resp.json();
+                        results.push({ ...cd, data });
+                        
+                        // Pequeño delay entre peticiones
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                        
+                    } catch (error) {
+                        console.error(`Error cargando ${cd.ciudad}:`, error);
+                        // Continuar con la siguiente ciudad
+                    }
+                }
+                
+                if (results.length === 0) {
+                    throw new Error('No se pudo cargar ninguna ciudad');
+                }
                 
                 const validResults = results.filter(r => 
                     r.data?.daily?.temperature_2m_max?.[0] !== undefined && 
@@ -334,8 +400,7 @@
                 );
                 
                 if (validResults.length === 0) {
-                    summary.innerHTML = `<p class="text-red-400">⚠️ No se pudieron procesar los datos. Intenta más tarde.</p>`;
-                    return;
+                    throw new Error('Datos inválidos recibidos de la API');
                 }
                 
                 updateUI(validResults);
@@ -348,17 +413,28 @@
                     setTimeout(() => k.classList.remove('updated'), 400);
                 });
                 
+                console.log(`✅ Cargadas ${validResults.length} ciudades exitosamente`);
+                
             } catch (e) { 
-                console.error('Error cargando clima:', e); 
-                summary.innerHTML = `<p class="text-red-400">⚠️ Error de conexión. Verifica tu red.</p>`;
+                console.error('Error crítico cargando clima:', e); 
+                summary.innerHTML = `
+                    <div class="error-message">
+                        <i class="fas fa-exclamation-circle text-red-400 text-2xl mb-2"></i>
+                        <p class="text-red-400 font-bold mb-1">Error de conexión</p>
+                        <p class="text-sm text-slate-400">No se pudieron cargar los datos climáticos. Verifica tu conexión a internet o intenta más tarde.</p>
+                        <button onclick="cargarClima()" class="mt-3 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-bold">
+                            <i class="fas fa-sync-alt mr-1"></i> Reintentar
+                        </button>
+                    </div>
+                `;
             } finally { 
                 btn.classList.remove('fa-spin'); 
+                loadingOverlay?.classList.add('hidden');
                 kpis.forEach(k => k.classList.remove('opacity-50'));
                 document.getElementById('lastUpdate').textContent = `SYNC: ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`; 
             }
         }
 
-        // ✅ RESUMEN LIMPIO: Se eliminó la línea de "Inestabilidad en X zonas"
         function generarResumen(results) {
             const sumBox = document.getElementById('summary-text');
             const validMax = results.map(r => r.data.daily.temperature_2m_max[0]).filter(v => !isNaN(v));
@@ -379,7 +455,6 @@
             sumBox.innerHTML = html;
         }
 
-        // ✅ ALERTAS CON VALORES ESPECÍFICOS (% o °)
         function updateAlerts(results) {
             const alertsSection = document.getElementById('alerts-section');
             const alertsList = document.getElementById('alerts-list');
@@ -787,7 +862,11 @@
             });
         }
         
-        document.addEventListener('DOMContentLoaded', cargarClima);
+        // Cargar al iniciar
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('🌡️ Iniciando Baalam Weather Dashboard...');
+            cargarClima();
+        });
         
         document.addEventListener('keydown', (e) => {
             if (e.key.toLowerCase() === 'r' && !e.target.matches('input, textarea, [contenteditable]')) {
