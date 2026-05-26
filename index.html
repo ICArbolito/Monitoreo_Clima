@@ -162,17 +162,15 @@
             pointer-events: none;
             transition: opacity 0.3s;
         }
-        .error-details {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            border-radius: 0.5rem;
-            padding: 1rem;
-            margin-top: 1rem;
-            font-family: monospace;
-            font-size: 0.75rem;
-            color: #fca5a5;
-            max-height: 150px;
-            overflow-y: auto;
+        .progress-dots::after {
+            content: '';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
         }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -188,8 +186,11 @@
     <!-- Loading Overlay -->
     <div id="loadingOverlay" class="loading-overlay">
         <i class="fas fa-circle-notch fa-spin text-5xl text-green-500"></i>
-        <p class="text-slate-300 font-medium text-lg">Conectando con API (vía Proxy)...</p>
-        <p id="loadingStatus" class="text-slate-500 text-sm">Iniciando conexión segura...</p>
+        <p class="text-slate-300 font-medium text-lg">Cargando datos<span class="progress-dots"></span></p>
+        <p id="loadingStatus" class="text-slate-500 text-sm">Intentando conexión...</p>
+        <div id="progressBar" class="w-64 h-1 bg-slate-700 rounded-full overflow-hidden mt-2">
+            <div id="progressFill" class="h-full bg-green-500 transition-all duration-300" style="width: 0%"></div>
+        </div>
     </div>
 
     <div class="flex flex-1 gap-2 overflow-hidden">
@@ -210,14 +211,7 @@
 
                 <div id="auto-summary" class="text-left italic px-1">
                     <p class="font-bold text-slate-400 mb-3 uppercase tracking-tight text-[10px]">Perspectiva Operativa</p>
-                    <div id="summary-text" class="summary-text space-y-2 text-slate-300" aria-live="polite">
-                        <div class="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-3">
-                            <p class="text-yellow-400 text-xs font-bold mb-1">
-                                <i class="fas fa-info-circle mr-1"></i> DIAGNÓSTICO
-                            </p>
-                            <p class="text-slate-300 text-[10px]">Presiona F12 y ve a la consola para ver el error específico.</p>
-                        </div>
-                    </div>
+                    <div id="summary-text" class="summary-text space-y-2 text-slate-300" aria-live="polite">Cargando...</div>
                 </div>
 
                 <!-- ALERTAS ACTIVAS -->
@@ -331,6 +325,20 @@
         const cds = Object.entries(config.regiones).flatMap(([region, cities]) => cities.map(c => ({...c, region})));
         let charts = {};
         const gradientCache = new WeakMap();
+        let isDemoMode = false;
+
+        // DATOS DE DEMOSTRACIÓN REALISTAS
+        const demoData = {
+            "León": { current: 23, max: 30, min: 16, precip: 84 },
+            "Irapuato": { current: 23, max: 28, min: 15, precip: 68 },
+            "Querétaro": { current: 25, max: 31, min: 17, precip: 74 },
+            "Arandas": { current: 22, max: 29, min: 14, precip: 92 },
+            "Lagos de Moreno": { current: 21, max: 28, min: 13, precip: 71 },
+            "Zapotlanejo": { current: 24, max: 33, min: 16, precip: 45 },
+            "Zamora": { current: 20, max: 27, min: 12, precip: 88 },
+            "La Piedad": { current: 22, max: 29, min: 14, precip: 76 },
+            "Aguascalientes": { current: 23, max: 30, min: 15, precip: 52 }
+        };
 
         function getCachedGradient(ctx, chartArea, factory) {
             if (!gradientCache.has(ctx.canvas)) {
@@ -353,133 +361,182 @@
             return gradient;
         }
 
-        // ✅ SOLUCIÓN CORS: Usamos corsproxy.io para saltar la restricción
-        const PROXY_URL = 'https://corsproxy.io/?';
-        const API_BASE = 'https://api.open-meteo.com/v1/forecast';
-
-        async function testAPIConnection() {
-            const loadingStatus = document.getElementById('loadingStatus');
-            const testUrl = `${PROXY_URL}${encodeURIComponent(API_BASE + '?latitude=21.12&longitude=-101.68&current_weather=true&timezone=auto')}`;
-            
-            try {
-                loadingStatus.textContent = 'Probando conexión a través de Proxy...';
-                console.log('🔍 Probando API vía Proxy:', testUrl);
-                
-                const response = await fetch(testUrl, {
-                    method: 'GET',
-                    headers: { 'Accept': 'application/json' }
-                });
-                
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                
-                const data = await response.json();
-                console.log('✅ API responde correctamente vía Proxy');
-                return { success: true, data };
-                
-            } catch (error) {
-                console.error('❌ Error de conexión:', error);
-                return { success: false, error: error.message };
-            }
-        }
-
+        // ✅ CARGA RÁPIDA CON TIMEOUT Y FALLBACK
         async function cargarClima() {
             const btn = document.getElementById('refreshIcon');
             const summary = document.getElementById('summary-text');
             const loadingOverlay = document.getElementById('loadingOverlay');
             const loadingStatus = document.getElementById('loadingStatus');
+            const progressFill = document.getElementById('progressFill');
             const kpis = ['kpiCurrent', 'kpiMax', 'kpiMin'].map(id => document.getElementById(id));
             
             btn.classList.add('fa-spin');
             loadingOverlay?.classList.remove('hidden');
+            isDemoMode = false;
             
-            try {
-                // Test de conexión primero
-                const testResult = await testAPIConnection();
-                if (!testResult.success) {
-                    throw new Error(`Proxy falla: ${testResult.error}`);
-                }
-                
-                loadingStatus.textContent = 'Cargando datos de ciudades...';
-                summary.innerHTML = '<p class="text-slate-400">Procesando datos...</p>';
-                
-                const results = [];
-                let successCount = 0;
-                
-                for (let i = 0; i < cds.length; i++) {
-                    const cd = cds[i];
-                    loadingStatus.textContent = `Cargando ${cd.ciudad} (${i+1}/${cds.length})...`;
+            // TIMEOUT GLOBAL DE 8 SEGUNDOS
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('TIMEOUT_8S')), 8000);
+            });
+            
+            // Progreso animado
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += Math.random() * 15;
+                if (progress > 90) progress = 90;
+                progressFill.style.width = progress + '%';
+            }, 500);
+            
+            const fetchPromise = (async () => {
+                try {
+                    console.log('🌡️ Iniciando carga...');
+                    loadingStatus.textContent = 'Conectando con API...';
                     
-                    try {
-                        // Construimos la URL original y la pasamos por el proxy
-                        const originalUrl = `${API_BASE}?latitude=${cd.lat}&longitude=${cd.lon}&current_weather=true&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=America/Mexico_City`;
-                        const proxyUrl = `${PROXY_URL}${encodeURIComponent(originalUrl)}`;
-                        
-                        console.log(`📡 Solicitando (vía Proxy): ${cd.ciudad}`);
-                        
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => controller.abort(), 10000);
-                        
-                        const resp = await fetch(proxyUrl, { 
-                            signal: controller.signal,
-                            headers: { 'Accept': 'application/json' }
-                        });
-                        clearTimeout(timeoutId);
-                        
-                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                        
-                        const data = await resp.json();
-                        
-                        if (!data.current_weather || !data.daily?.temperature_2m_max?.length) {
-                            throw new Error('Datos incompletos');
+                    const results = [];
+                    
+                    // Carga PARALELA rápida (sin delay entre peticiones)
+                    const fetchPromises = cds.map(async (cd) => {
+                        try {
+                            // Intento directo SIN proxy primero (más rápido si funciona)
+                            const url = `https://api.open-meteo.com/v1/forecast?latitude=${cd.lat}&longitude=${cd.lon}&current_weather=true&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=America/Mexico_City`;
+                            
+                            const controller = new AbortController();
+                            const timeoutId = setTimeout(() => controller.abort(), 5000);
+                            
+                            const resp = await fetch(url, { 
+                                signal: controller.signal,
+                                headers: { 'Accept': 'application/json' }
+                            });
+                            clearTimeout(timeoutId);
+                            
+                            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                            
+                            const data = await resp.json();
+                            if (!data.current_weather) throw new Error('Datos incompletos');
+                            
+                            console.log(`✅ ${cd.ciudad}: ${data.current_weather.temperature}°C`);
+                            return { ...cd, data };
+                            
+                        } catch (error) {
+                            console.warn(`❌ ${cd.ciudad}: ${error.message}`);
+                            return null;
                         }
-                        
-                        results.push({ ...cd, data });
-                        successCount++;
-                        console.log(`✅ ${cd.ciudad}: ${data.current_weather.temperature}°C`);
-                        
-                        await new Promise(resolve => setTimeout(resolve, 200));
-                        
-                    } catch (error) {
-                        console.error(`❌ Error en ${cd.ciudad}:`, error);
+                    });
+                    
+                    // Esperar todas las peticiones
+                    const fetchResults = await Promise.all(fetchPromises);
+                    const validResults = fetchResults.filter(r => r !== null);
+                    
+                    if (validResults.length === 0) {
+                        throw new Error('Ninguna API respondió');
+                    }
+                    
+                    clearInterval(progressInterval);
+                    progressFill.style.width = '100%';
+                    
+                    // Actualizar UI
+                    updateUI(validResults);
+                    generarResumen(validResults);
+                    updateAlerts(validResults);
+                    updateExtremes(validResults);
+                    
+                    console.log(`✅ Cargadas ${validResults.length} ciudades`);
+                    
+                } catch (error) {
+                    console.error('❌ Error:', error.message);
+                    clearInterval(progressInterval);
+                    
+                    // FALLBACK AUTOMÁTICO A DEMO
+                    console.log('📦 Usando datos de demostración...');
+                    isDemoMode = true;
+                    loadDemoData();
+                } finally {
+                    // SIEMPRE ocultar loading después de un tiempo
+                    setTimeout(() => {
+                        loadingOverlay?.classList.add('hidden');
+                        btn.classList.remove('fa-spin');
+                        kpis.forEach(k => k.classList.remove('opacity-50'));
+                        document.getElementById('lastUpdate').textContent = `SYNC: ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+                    }, 500);
+                }
+            })();
+            
+            // Race entre fetch y timeout
+            try {
+                await Promise.race([fetchPromise, timeoutPromise]);
+            } catch (error) {
+                console.error('⏱️ Timeout o error:', error.message);
+                if (error.message === 'TIMEOUT_8S') {
+                    console.log('⏱️ Demasiado lento, cargando demo...');
+                    isDemoMode = true;
+                    loadDemoData();
+                    setTimeout(() => {
+                        loadingOverlay?.classList.add('hidden');
+                        btn.classList.remove('fa-spin');
+                    }, 500);
+                }
+            }
+        }
+
+        function loadDemoData() {
+            console.log('🎭 Cargando MODO DEMOSTRACIÓN');
+            
+            const results = cds.map(cd => ({
+                ...cd,
+                data: {
+                    current_weather: {
+                        temperature: demoData[cd.ciudad]?.current || 20,
+                        windspeed: 10,
+                        winddirection: 180,
+                        weathercode: 0,
+                        time: new Date().toISOString()
+                    },
+                    daily: {
+                        time: Array.from({length: 7}, (_, i) => {
+                            const d = new Date();
+                            d.setDate(d.getDate() + i);
+                            return d.toISOString().split('T')[0];
+                        }),
+                        temperature_2m_max: Array.from({length: 7}, () => demoData[cd.ciudad]?.max || 28),
+                        temperature_2m_min: Array.from({length: 7}, () => demoData[cd.ciudad]?.min || 15),
+                        precipitation_probability_max: Array.from({length: 7}, () => demoData[cd.ciudad]?.precip || 50)
+                    },
+                    hourly: {
+                        time: Array.from({length: 24}, (_, i) => {
+                            const d = new Date();
+                            d.setHours(d.getHours() + i);
+                            return d.toISOString();
+                        }),
+                        temperature_2m: Array.from({length: 24}, (_, i) => {
+                            const base = demoData[cd.ciudad]?.current || 20;
+                            const hour = (new Date().getHours() + i) % 24;
+                            if (hour >= 6 && hour <= 15) return base + (hour - 6) * 0.8;
+                            if (hour > 15 && hour <= 20) return base + 7 - (hour - 15) * 0.5;
+                            return base - 3;
+                        })
                     }
                 }
-                
-                if (results.length === 0) throw new Error('Ninguna ciudad cargó correctamente');
-                
-                updateUI(results);
-                generarResumen(results);
-                updateAlerts(results);
-                updateExtremes(results);
-                
-                kpis.forEach(k => {
-                    k.classList.add('updated');
-                    setTimeout(() => k.classList.remove('updated'), 400);
-                });
-                
-            } catch (error) {
-                console.error('❌ Error crítico:', error);
-                summary.innerHTML = `
-                    <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-3 mb-2">
-                        <p class="text-red-400 text-xs font-bold mb-1">
-                            <i class="fas fa-exclamation-triangle mr-1"></i> ERROR DE CONEXIÓN
-                        </p>
-                        <p class="text-slate-300 text-[10px] mb-2">${error.message}</p>
-                        <button onclick="cargarClima()" class="w-full px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-bold transition-colors">
-                            <i class="fas fa-sync-alt mr-1"></i> Reintentar
-                        </button>
-                    </div>
-                `;
-            } finally {
-                loadingOverlay?.classList.add('hidden');
-                btn.classList.remove('fa-spin');
-                kpis.forEach(k => k.classList.remove('opacity-50'));
-                document.getElementById('lastUpdate').textContent = `SYNC: ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
-            }
+            }));
+            
+            const summary = document.getElementById('summary-text');
+            summary.innerHTML = `
+                <div class="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-3 mb-2">
+                    <p class="text-yellow-400 text-xs font-bold mb-1">
+                        <i class="fas fa-info-circle mr-1"></i> MODO DEMOSTRACIÓN
+                    </p>
+                    <p class="text-slate-300 text-[10px]">La API no respondió a tiempo. Mostrando datos de ejemplo.</p>
+                </div>
+                <p class="text-slate-400 text-xs">Presiona el botón verde para reintentar.</p>
+            `;
+            
+            updateUI(results);
+            updateAlerts(results);
+            updateExtremes(results);
         }
 
         function generarResumen(results) {
             const sumBox = document.getElementById('summary-text');
-            if (sumBox.querySelector('.bg-red-500')) return;
+            if (sumBox.querySelector('.bg-yellow-500') || sumBox.querySelector('.bg-red-500')) return;
             
             const validMax = results.map(r => r.data.daily.temperature_2m_max[0]).filter(v => !isNaN(v));
             const validMaxTomorrow = results.map(r => r.data.daily.temperature_2m_max[1]).filter(v => !isNaN(v));
@@ -696,7 +753,7 @@
         }
         
         window.addEventListener('DOMContentLoaded', () => {
-            console.log('🌡️ Baalam Weather Dashboard - FIX CORS');
+            console.log('🌡️ Baalam Weather Dashboard - FAST LOAD');
             cargarClima();
         });
         
